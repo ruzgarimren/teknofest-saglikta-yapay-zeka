@@ -1,0 +1,1 @@
+# teknofest-saglikta-yapay-zeka

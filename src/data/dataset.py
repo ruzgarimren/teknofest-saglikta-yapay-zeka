@@ -1,46 +1,96 @@
 import os
+import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from PIL import Image
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 import pandas as pd
 
 class PolypDataset(Dataset):
-    def __init__(self, data_dir, transform=None):
-        self.data_dir = data_dir
-        self.transform = transform
-        
-        # Load image and mask paths
+    def __init__(self, data_dir, train=True):
         self.images_dir = os.path.join(data_dir, 'PNG', 'Original')
         self.masks_dir = os.path.join(data_dir, 'PNG', 'Ground Truth')
+        self.train = train
         
-        # Get all image files
-        self.image_files = sorted([f for f in os.listdir(self.images_dir) 
-                                 if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+        self.images = sorted([f for f in os.listdir(self.images_dir) 
+                            if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+        
+        if train:
+            self.transform = A.Compose([
+                A.RandomResizedCrop(256, 256, scale=(0.8, 1.0)),
+                A.HorizontalFlip(p=0.5),
+                A.VerticalFlip(p=0.5),
+                A.RandomRotate90(p=0.5),
+                A.ShiftScaleRotate(
+                    shift_limit=0.0625, 
+                    scale_limit=0.2, 
+                    rotate_limit=45, 
+                    p=0.5
+                ),
+                A.OneOf([
+                    A.ElasticTransform(
+                        alpha=120, 
+                        sigma=120 * 0.05, 
+                        alpha_affine=120 * 0.03, 
+                        p=0.5
+                    ),
+                    A.GridDistortion(p=0.5),
+                    A.OpticalDistortion(
+                        distort_limit=1, 
+                        shift_limit=0.5, 
+                        p=0.5
+                    ),
+                ], p=0.3),
+                A.OneOf([
+                    A.GaussNoise(p=0.5),
+                    A.RandomBrightnessContrast(p=0.5),
+                    A.RandomGamma(p=0.5),
+                ], p=0.3),
+                A.CoarseDropout(
+                    max_holes=8, 
+                    max_height=20, 
+                    max_width=20, 
+                    min_holes=5, 
+                    min_height=15, 
+                    min_width=15, 
+                    fill_value=0, 
+                    p=0.3
+                ),
+                A.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225]
+                ),
+                ToTensorV2(),
+            ])
+        else:
+            self.transform = A.Compose([
+                A.Resize(256, 256),
+                A.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225]
+                ),
+                ToTensorV2(),
+            ])
 
     def __len__(self):
-        return len(self.image_files)
+        return len(self.images)
 
     def __getitem__(self, idx):
-        # Load image
-        img_name = self.image_files[idx]
+        img_name = self.images[idx]
         img_path = os.path.join(self.images_dir, img_name)
         mask_path = os.path.join(self.masks_dir, img_name)
         
-        # Read image and mask
-        image = Image.open(img_path).convert('RGB')
-        mask = Image.open(mask_path).convert('L')  # Convert to grayscale
+        image = cv2.imread(img_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
         
-        # Apply transformations
-        if self.transform:
-            image = self.transform['image'](image)
-            mask = self.transform['mask'](mask)
+        transformed = self.transform(image=image, mask=mask)
+        image = transformed["image"]
+        mask = transformed["mask"]
         
-        return {
-            'image': image,
-            'mask': mask,
-            'image_path': img_path
-        }
+        mask = torch.unsqueeze((mask > 128).float(), 0)
+        return image, mask
 
 def get_transforms(image_size=256):
     """

@@ -1,26 +1,35 @@
-from torchvision import transforms
 import torch
+import os
 
 # Data configuration
-DATA_DIR = './data'
-IMAGE_SIZE = 256
-BATCH_SIZE = 8
+DATA_DIR = 'data'
+SAVE_DIR = 'outputs'
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+IMAGE_SIZE = 256  # Updated to match decoder output size
+BATCH_SIZE = 16
 NUM_WORKERS = 4
 
 # Model configuration
-IN_CHANNELS = 3
-OUT_CHANNELS = 1
-LEARNING_RATE = 0.001
-NUM_EPOCHS = 50
+MODEL_CONFIG = {
+    'NUM_CLASSES': 1,
+    'PRETRAINED': True,
+    'FREEZE_BACKBONE': True,
+    'DROPOUT': 0.1
+}
 
 # Training configuration
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-SAVE_DIR = 'outputs'
-
-# Data transforms
-transform = transforms.Compose([
-    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                        std=[0.229, 0.224, 0.225])
-]) 
+TRAINING_CONFIG = {
+    'NUM_EPOCHS': 100,
+    'LEARNING_RATE': 2e-4,
+    'WEIGHT_DECAY': 1e-4,
+    'DEVICE': torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+    'TRAIN_SIZE': 0.7,
+    'VAL_SIZE': 0.15,
+    'TEST_SIZE': 0.15,
+    'SEED': 42,
+    'BCE_WEIGHT': 1.0,
+    'DICE_WEIGHT': 1.0,
+    'DEEP_SUPERVISION_WEIGHT': 0.4,
+    'AUX_WEIGHT': 0.2
+} 

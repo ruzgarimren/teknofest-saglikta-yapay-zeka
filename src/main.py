@@ -1,87 +1,30 @@
 import os
 import torch
-from torch.utils.data import DataLoader, random_split
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import wandb
+import segmentation_models_pytorch as smp
+from data.dataset import PolypDataset, get_preprocessing
+from config.config import TRAINING_CONFIG, MODEL_CONFIG, DATA_CONFIG
 
-from models.swin_birefnet import SwinBirefNet, BCEDiceLoss, iou_score
-from data.dataset import PolypDataset
-from config.config import *
+def dice_loss(pred, target):
+    smooth = 1e-5
+    pred = torch.sigmoid(pred)
+    pred = pred.contiguous()
+    target = target.contiguous()
+    intersection = (pred * target).sum(dim=2).sum(dim=2)
+    loss = (1 - ((2. * intersection + smooth) / (pred.sum(dim=2).sum(dim=2) + target.sum(dim=2).sum(dim=2) + smooth)))
+    return loss.mean()
 
-def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
-    model.train()
-    total_loss = 0
-    total_iou = 0
-    
-    for batch_idx, (images, masks) in enumerate(train_loader):
-        images, masks = images.to(device), masks.to(device)
-        optimizer.zero_grad()
-        
-        # Forward pass
-        outputs = model(images)
-        if isinstance(outputs, tuple):
-            main_out, deep3, deep2, aux = outputs
-            
-            # Calculate losses
-            main_loss = criterion(main_out, masks)
-            deep3_loss = criterion(deep3, masks)
-            deep2_loss = criterion(deep2, masks)
-            
-            # Calculate mean presence of polyp in each image
-            mask_presence = (masks.view(masks.size(0), -1).mean(1) > 0.1).float()
-            aux_loss = torch.nn.BCEWithLogitsLoss()(aux.squeeze(), mask_presence)
-            
-            # Combine losses
-            loss = (main_loss + 
-                   TRAINING_CONFIG['DEEP_SUPERVISION_WEIGHT'] * (deep3_loss + deep2_loss) / 2 +
-                   TRAINING_CONFIG['AUX_WEIGHT'] * aux_loss)
-            
-            # Calculate IoU for main output
-            batch_iou = iou_score(main_out, masks)
-        else:
-            loss = criterion(outputs, masks)
-            batch_iou = iou_score(outputs, masks)
-        
-        # Backward pass
-        loss.backward()
-        optimizer.step()
-        
-        total_loss += loss.item()
-        total_iou += batch_iou.item()
-        
-        if batch_idx % 10 == 0:
-            print(f'Epoch: {epoch}, Batch: {batch_idx}, Loss: {loss.item():.4f}, IoU: {batch_iou.item():.4f}')
-            wandb.log({
-                "batch_loss": loss.item(),
-                "batch_iou": batch_iou.item(),
-                "learning_rate": optimizer.param_groups[0]['lr']
-            })
-    
-    avg_loss = total_loss / len(train_loader)
-    avg_iou = total_iou / len(train_loader)
-    return avg_loss, avg_iou
-
-def validate(model, val_loader, criterion, device):
-    model.eval()
-    total_loss = 0
-    total_iou = 0
-    
-    with torch.no_grad():
-        for images, masks in val_loader:
-            images, masks = images.to(device), masks.to(device)
-            
-            outputs = model(images)
-            if isinstance(outputs, tuple):
-                outputs = outputs[0]
-            
-            loss = criterion(outputs, masks)
-            batch_iou = iou_score(outputs, masks)
-            
-            total_loss += loss.item()
-            total_iou += batch_iou.item()
-    
-    avg_loss = total_loss / len(val_loader)
-    avg_iou = total_iou / len(val_loader)
-    return avg_loss, avg_iou
+def calculate_iou(pred, target):
+    pred = (torch.sigmoid(pred) > 0.5).bool()
+    target = target.bool()
+    intersection = (pred & target).sum((2,3))
+    union = (pred | target).sum((2,3))
+    iou = (intersection.float() / union.float()).mean()
+    return iou
 
 def main():
     # Set random seed
@@ -91,138 +34,110 @@ def main():
     wandb.init(
         project="polyp-segmentation",
         config={
-            "architecture": "Swin-BirefNet",
+            "architecture": "DeepLabV3+",
             "dataset": "CVC-ClinicDB",
             **MODEL_CONFIG,
             **TRAINING_CONFIG
         }
     )
     
-    # Create datasets
-    dataset = PolypDataset(DATA_DIR, train=True)
-    total_size = len(dataset)
-    train_size = int(TRAINING_CONFIG['TRAIN_SIZE'] * total_size)
-    val_size = int(TRAINING_CONFIG['VAL_SIZE'] * total_size)
-    test_size = total_size - train_size - val_size
+    preprocessing_fn = smp.encoders.get_preprocessing_fn(MODEL_CONFIG['ENCODER'], MODEL_CONFIG['ENCODER_WEIGHTS'])
+    preprocessing = get_preprocessing(preprocessing_fn)
     
-    train_dataset, val_dataset, test_dataset = random_split(
-        dataset, [train_size, val_size, test_size]
+    train_dataset = PolypDataset(
+        data_dir=DATA_CONFIG['data_dir'],
+        train=True,
+        preprocessing=preprocessing
     )
     
-    # Create data loaders
+    valid_dataset = PolypDataset(
+        data_dir=DATA_CONFIG['data_dir'],
+        train=False,
+        preprocessing=preprocessing
+    )
+    
     train_loader = DataLoader(
         train_dataset,
-        batch_size=BATCH_SIZE,
+        batch_size=TRAINING_CONFIG['BATCH_SIZE'],
         shuffle=True,
-        num_workers=NUM_WORKERS,
+        num_workers=4,
         pin_memory=True
     )
     
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=BATCH_SIZE,
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=TRAINING_CONFIG['BATCH_SIZE'],
         shuffle=False,
-        num_workers=NUM_WORKERS,
+        num_workers=4,
         pin_memory=True
     )
     
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=True
+    model = smp.DeepLabV3Plus(
+        encoder_name=MODEL_CONFIG['ENCODER'],
+        encoder_weights=MODEL_CONFIG['ENCODER_WEIGHTS'],
+        in_channels=3,
+        classes=1
     )
     
-    # Create model
-    model = SwinBirefNet(
-        num_classes=MODEL_CONFIG['NUM_CLASSES'],
-        pretrained=MODEL_CONFIG['PRETRAINED']
-    ).to(TRAINING_CONFIG['DEVICE'])
+    criterion = dice_loss
+    optimizer = optim.Adam(model.parameters(), lr=TRAINING_CONFIG['LEARNING_RATE'])
+    scheduler = CosineAnnealingLR(optimizer, T_max=TRAINING_CONFIG['NUM_EPOCHS'])
     
-    # Loss and optimizer
-    criterion = BCEDiceLoss(
-        weights=[TRAINING_CONFIG['BCE_WEIGHT'], TRAINING_CONFIG['DICE_WEIGHT']]
-    )
-    
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=TRAINING_CONFIG['LEARNING_RATE'],
-        weight_decay=TRAINING_CONFIG['WEIGHT_DECAY']
-    )
-    
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer,
-        T_0=10,
-        T_mult=2,
-        eta_min=1e-6
-    )
-    
-    # Training loop
-    best_val_iou = 0
-    
-    print("Starting training...")
+    best_iou = 0.0
     for epoch in range(TRAINING_CONFIG['NUM_EPOCHS']):
-        # Train
-        train_loss, train_iou = train_one_epoch(
-            model, train_loader, criterion, optimizer,
-            TRAINING_CONFIG['DEVICE'], epoch
-        )
+        model.train()
+        train_loss = 0.0
+        train_iou = 0.0
+        for batch_idx, (images, masks) in enumerate(train_loader):
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, masks)
+            loss.backward()
+            optimizer.step()
+            
+            batch_iou = calculate_iou(outputs, masks)
+            train_loss += loss.item()
+            train_iou += batch_iou.item()
+            
+            if batch_idx % 10 == 0:
+                print(f'Epoch: {epoch+1}/{TRAINING_CONFIG["NUM_EPOCHS"]}, Batch: {batch_idx}/{len(train_loader)}, Loss: {loss.item():.4f}, IoU: {batch_iou.item():.4f}')
         
-        # Validate
-        val_loss, val_iou = validate(
-            model, val_loader, criterion,
-            TRAINING_CONFIG['DEVICE']
-        )
+        train_loss /= len(train_loader)
+        train_iou /= len(train_loader)
         
-        # Update learning rate
-        scheduler.step()
+        model.eval()
+        valid_loss = 0.0
+        valid_iou = 0.0
+        with torch.no_grad():
+            for images, masks in valid_loader:
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+                valid_loss += loss.item()
+                valid_iou += calculate_iou(outputs, masks).item()
         
-        # Log metrics
+        valid_loss /= len(valid_loader)
+        valid_iou /= len(valid_loader)
+        
+        print(f'Epoch {epoch+1}/{TRAINING_CONFIG["NUM_EPOCHS"]}:')
+        print(f'Train Loss: {train_loss:.4f}, Train IoU: {train_iou:.4f}')
+        print(f'Valid Loss: {valid_loss:.4f}, Valid IoU: {valid_iou:.4f}')
+        
         wandb.log({
             "epoch": epoch,
             "train_loss": train_loss,
             "train_iou": train_iou,
-            "val_loss": val_loss,
-            "val_iou": val_iou
+            "val_loss": valid_loss,
+            "val_iou": valid_iou
         })
         
-        print(f"Epoch {epoch+1}/{TRAINING_CONFIG['NUM_EPOCHS']}")
-        print(f"Train Loss: {train_loss:.4f}, Train IoU: {train_iou:.4f}")
-        print(f"Val Loss: {val_loss:.4f}, Val IoU: {val_iou:.4f}")
+        if valid_iou > best_iou:
+            best_iou = valid_iou
+            torch.save(model.state_dict(), os.path.join(TRAINING_CONFIG['output_dir'], 'best_model.pth'))
+            print(f'New best model saved with IoU: {best_iou:.4f}')
         
-        # Save best model
-        if val_iou > best_val_iou:
-            best_val_iou = val_iou
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'val_iou': val_iou,
-            }, os.path.join(SAVE_DIR, 'best_model.pth'))
-            print(f"New best model saved! Val IoU: {val_iou:.4f}")
-    
-    # Test best model
-    print("\nLoading best model for testing...")
-    checkpoint = torch.load(os.path.join(SAVE_DIR, 'best_model.pth'))
-    model.load_state_dict(checkpoint['model_state_dict'])
-    
-    test_loss, test_iou = validate(
-        model, test_loader, criterion,
-        TRAINING_CONFIG['DEVICE']
-    )
-    
-    print(f"\nTest Results:")
-    print(f"Test Loss: {test_loss:.4f}")
-    print(f"Test IoU: {test_iou:.4f}")
-    
-    wandb.log({
-        "test_loss": test_loss,
-        "test_iou": test_iou
-    })
+        scheduler.step()
     
     wandb.finish()
 
-if __name__ == "__main__":
-    main() 
+if __name__ == '__main__':
+    main()

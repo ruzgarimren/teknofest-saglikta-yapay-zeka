@@ -36,6 +36,7 @@ outputs/
 *.pth
 *.png
 /data
+*input
 
 # Jupyter Notebook
 .ipynb_checkpoints

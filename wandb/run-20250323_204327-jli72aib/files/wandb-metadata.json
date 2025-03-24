@@ -1,0 +1,49 @@
+{
+    "os": "macOS-15.3.2-arm64-arm-64bit",
+    "python": "3.10.11",
+    "heartbeatAt": "2025-03-23T17:43:28.968079",
+    "startedAt": "2025-03-23T17:43:27.745486",
+    "docker": null,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "/Users/ruzgarimren/Desktop/teknofest-saglikta-yapay-zeka/src/main.py",
+    "codePathLocal": "src/main.py",
+    "codePath": "src/main.py",
+    "git": {
+        "remote": "https://github.com/ruzgarimren/teknofest-saglikta-yapay-zeka.git",
+        "commit": "5b4dc9bdc378bc59eb6e8f14fcc37cd71001fcca"
+    },
+    "email": "ruzgar@madlen.io",
+    "root": "/Users/ruzgarimren/Desktop/teknofest-saglikta-yapay-zeka",
+    "host": "192.168.1.10",
+    "username": "ruzgarimren",
+    "executable": "/usr/local/bin/python3",
+    "cpu_count": 14,
+    "cpu_count_logical": 14,
+    "cpu_freq": {
+        "current": 4056,
+        "min": 1020,
+        "max": 4056
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 4056,
+            "min": 1020,
+            "max": 4056
+        }
+    ],
+    "disk": {
+        "/": {
+            "total": 926.3517189025879,
+            "used": 10.393268585205078
+        }
+    },
+    "gpuapple": {
+        "type": "arm",
+        "vendor": "Apple"
+    },
+    "memory": {
+        "total": 36.0
+    }
+}

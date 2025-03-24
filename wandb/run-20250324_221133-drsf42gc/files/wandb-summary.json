@@ -1,0 +1,1 @@
+{"train/dice_loss": 0.2308399489947728, "train/iou_score": 0.9032327958515711, "val/dice_loss": 0.18433640897274017, "val/iou_score": 0.9357968419790268, "learning_rate": 8e-05, "_timestamp": 1742844855.94994, "_runtime": 1362.3393230438232, "_step": 1}

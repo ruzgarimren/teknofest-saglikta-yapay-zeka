@@ -39,13 +39,6 @@ def main():
     data_config = get_data_config(args.dataset)
     torch.manual_seed(TRAINING_CONFIG['SEED'])
     
-    print(f"\nStarting training on {dataset_config['name']}")
-    print(f"Data directory: {data_config['data_dir']}")
-    print(f"Batch size: {args.batch_size}")
-    print(f"Epochs: {args.epochs}")
-    print(f"Learning rate: {args.learning_rate}")
-    print("-" * 50)
-    
     wandb.init(
         project="polyp-segmentation",
         config={
@@ -57,6 +50,16 @@ def main():
             **MODEL_CONFIG
         }
     )
+    
+    # Use wandb for device selection
+    device = wandb.config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\nStarting training on {dataset_config['name']}")
+    print(f"Data directory: {data_config['data_dir']}")
+    print(f"Batch size: {args.batch_size}")
+    print(f"Epochs: {args.epochs}")
+    print(f"Learning rate: {args.learning_rate}")
+    print(f"Using device: {device}")
+    print("-" * 50)
     
     preprocessing_fn = smp.encoders.get_preprocessing_fn(MODEL_CONFIG['ENCODER'], MODEL_CONFIG['ENCODER_WEIGHTS'])
     preprocessing = get_preprocessing(preprocessing_fn)
@@ -83,7 +86,7 @@ def main():
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=0,  # Multiprocessing uyarısını önlemek için 0'a çektik
+        num_workers=0,
         pin_memory=True
     )
     
@@ -91,7 +94,7 @@ def main():
         valid_dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=0,  # Multiprocessing uyarısını önlemek için 0'a çektik
+        num_workers=0,
         pin_memory=True
     )
     
@@ -102,16 +105,15 @@ def main():
         classes=1
     )
     
+    # Log model to wandb
+    wandb.watch(model)
+    
+    model = model.to(device)
     criterion = dice_loss
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
     
     best_iou = 0.0
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
-    print("-" * 50)
-    
-    model = model.to(device)
     
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch+1}/{args.epochs}")
@@ -142,7 +144,6 @@ def main():
             train_loss += loss.item()
             train_iou += batch_iou.item()
             
-            # Update progress bar
             train_bar.set_postfix({
                 'loss': f'{loss.item():.4f}',
                 'iou': f'{batch_iou.item():.4f}'
@@ -155,10 +156,10 @@ def main():
         model.eval()
         valid_loss = 0.0
         valid_iou = 0.0
-        val_bar = tqdm(valid_loader, desc='Validation')
+        valid_bar = tqdm(valid_loader, desc='Validation')
         
         with torch.no_grad():
-            for images, masks in val_bar:
+            for images, masks in valid_bar:
                 images = images.to(device)
                 masks = masks.to(device)
                 
@@ -174,8 +175,7 @@ def main():
                 valid_loss += loss.item()
                 valid_iou += batch_iou.item()
                 
-                # Update progress bar
-                val_bar.set_postfix({
+                valid_bar.set_postfix({
                     'loss': f'{loss.item():.4f}',
                     'iou': f'{batch_iou.item():.4f}'
                 })
@@ -183,34 +183,32 @@ def main():
         valid_loss /= len(valid_loader)
         valid_iou /= len(valid_loader)
         
-        # Log metrics
+        # Log metrics to wandb
         wandb.log({
+            "epoch": epoch + 1,
             "train/loss": train_loss,
             "train/iou": train_iou,
             "val/loss": valid_loss,
             "val/iou": valid_iou,
-            "learning_rate": optimizer.param_groups[0]['lr'],
-            "epoch": epoch
+            "learning_rate": optimizer.param_groups[0]['lr']
         })
         
-        # Save best model
-        if valid_iou > best_iou:
-            best_iou = valid_iou
-            torch.save(model.state_dict(), os.path.join(TRAINING_CONFIG['output_dir'], f'best_model_dataset_{args.dataset}.pth'))
-            print(f"\nNew best model saved! IoU: {best_iou:.4f}")
-        
-        # Print epoch summary
         print(f"\nEpoch Summary:")
         print(f"Train Loss: {train_loss:.4f} | Train IoU: {train_iou:.4f}")
         print(f"Val Loss: {valid_loss:.4f} | Val IoU: {valid_iou:.4f}")
         print(f"Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
-        print("-" * 50)
+        
+        # Save best model
+        if valid_iou > best_iou:
+            best_iou = valid_iou
+            model_path = os.path.join('outputs', f'best_model_dataset_{args.dataset}.pth')
+            torch.save(model.state_dict(), model_path)
+            print(f"Saved new best model with IoU: {best_iou:.4f}")
         
         scheduler.step()
-
-    print("\nTraining completed!")
-    print(f"Best IoU: {best_iou:.4f}")
+        print("-" * 50)
+    
     wandb.finish()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main() 

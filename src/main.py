@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import wandb
 import segmentation_models_pytorch as smp
-from data.dataset import PolypDataset, get_preprocessing
+from data.dataset import MultiDataset, get_preprocessing
 from config.config import TRAINING_CONFIG, MODEL_CONFIG, DATA_CONFIG
 
 def dice_loss(pred, target):
@@ -18,24 +18,18 @@ def dice_loss(pred, target):
     loss = (1 - ((2. * intersection + smooth) / (pred.sum(dim=2).sum(dim=2) + target.sum(dim=2).sum(dim=2) + smooth)))
     return loss.mean()
 
-def calculate_iou(pred, target):
-    pred = (torch.sigmoid(pred) > 0.5).bool()
-    target = target.bool()
-    intersection = (pred & target).sum((2,3))
-    union = (pred | target).sum((2,3))
-    iou = (intersection.float() / union.float()).mean()
-    return iou
-
 def main():
-    # Set random seed
     torch.manual_seed(TRAINING_CONFIG['SEED'])
     
-    # Initialize wandb
+    dataset_id = int(input("Select dataset (1, 2, or 3): "))
+    if dataset_id not in [1, 2, 3]:
+        raise ValueError("Dataset ID must be 1, 2, or 3")
+    
     wandb.init(
         project="polyp-segmentation",
         config={
             "architecture": "DeepLabV3+",
-            "dataset": "CVC-ClinicDB",
+            "dataset": f"Dataset_{dataset_id}",
             **MODEL_CONFIG,
             **TRAINING_CONFIG
         }
@@ -44,13 +38,15 @@ def main():
     preprocessing_fn = smp.encoders.get_preprocessing_fn(MODEL_CONFIG['ENCODER'], MODEL_CONFIG['ENCODER_WEIGHTS'])
     preprocessing = get_preprocessing(preprocessing_fn)
     
-    train_dataset = PolypDataset(
+    train_dataset = MultiDataset(
+        dataset_id=dataset_id,
         data_dir=DATA_CONFIG['data_dir'],
         train=True,
         preprocessing=preprocessing
     )
     
-    valid_dataset = PolypDataset(
+    valid_dataset = MultiDataset(
+        dataset_id=dataset_id,
         data_dir=DATA_CONFIG['data_dir'],
         train=False,
         preprocessing=preprocessing
@@ -84,60 +80,64 @@ def main():
     scheduler = CosineAnnealingLR(optimizer, T_max=TRAINING_CONFIG['NUM_EPOCHS'])
     
     best_iou = 0.0
+    device = TRAINING_CONFIG['DEVICE']
+    model = model.to(device)
+    
     for epoch in range(TRAINING_CONFIG['NUM_EPOCHS']):
         model.train()
         train_loss = 0.0
-        train_iou = 0.0
-        for batch_idx, (images, masks) in enumerate(train_loader):
+        for images, masks in train_loader:
+            images = images.to(device)
+            masks = masks.to(device)
+            
             optimizer.zero_grad()
             outputs = model(images)
             loss = criterion(outputs, masks)
             loss.backward()
             optimizer.step()
             
-            batch_iou = calculate_iou(outputs, masks)
             train_loss += loss.item()
-            train_iou += batch_iou.item()
-            
-            if batch_idx % 10 == 0:
-                print(f'Epoch: {epoch+1}/{TRAINING_CONFIG["NUM_EPOCHS"]}, Batch: {batch_idx}/{len(train_loader)}, Loss: {loss.item():.4f}, IoU: {batch_iou.item():.4f}')
         
         train_loss /= len(train_loader)
-        train_iou /= len(train_loader)
+        scheduler.step()
         
         model.eval()
         valid_loss = 0.0
-        valid_iou = 0.0
+        iou = 0.0
         with torch.no_grad():
             for images, masks in valid_loader:
+                images = images.to(device)
+                masks = masks.to(device)
+                
                 outputs = model(images)
                 loss = criterion(outputs, masks)
                 valid_loss += loss.item()
-                valid_iou += calculate_iou(outputs, masks).item()
+                
+                pred = torch.sigmoid(outputs)
+                pred = (pred > 0.5).float()
+                intersection = (pred * masks).sum()
+                union = pred.sum() + masks.sum() - intersection
+                iou += (intersection + 1e-6) / (union + 1e-6)
         
         valid_loss /= len(valid_loader)
-        valid_iou /= len(valid_loader)
-        
-        print(f'Epoch {epoch+1}/{TRAINING_CONFIG["NUM_EPOCHS"]}:')
-        print(f'Train Loss: {train_loss:.4f}, Train IoU: {train_iou:.4f}')
-        print(f'Valid Loss: {valid_loss:.4f}, Valid IoU: {valid_iou:.4f}')
+        iou /= len(valid_loader)
         
         wandb.log({
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "train_iou": train_iou,
-            "val_loss": valid_loss,
-            "val_iou": valid_iou
+            "train/loss": train_loss,
+            "val/loss": valid_loss,
+            "val/iou": iou,
+            "epoch": epoch
         })
         
-        if valid_iou > best_iou:
-            best_iou = valid_iou
-            torch.save(model.state_dict(), os.path.join(TRAINING_CONFIG['output_dir'], 'best_model.pth'))
-            print(f'New best model saved with IoU: {best_iou:.4f}')
+        if iou > best_iou:
+            best_iou = iou
+            torch.save(model.state_dict(), os.path.join(TRAINING_CONFIG['output_dir'], f'best_model_dataset_{dataset_id}.pth'))
         
-        scheduler.step()
-    
-    wandb.finish()
+        print(f'Epoch {epoch+1}/{TRAINING_CONFIG["NUM_EPOCHS"]}')
+        print(f'Train Loss: {train_loss:.4f}')
+        print(f'Val Loss: {valid_loss:.4f}')
+        print(f'IoU: {iou:.4f}')
+        print('-' * 50)
 
 if __name__ == '__main__':
     main()

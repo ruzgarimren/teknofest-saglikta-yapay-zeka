@@ -1,0 +1,68 @@
+wandb_version: 1
+
+architecture:
+  desc: null
+  value: DeepLabV3+
+dataset:
+  desc: null
+  value: Dataset_1
+batch_size:
+  desc: null
+  value: 16
+epochs:
+  desc: null
+  value: 15
+learning_rate:
+  desc: null
+  value: 8.0e-05
+ENCODER:
+  desc: null
+  value: resnet50
+ENCODER_WEIGHTS:
+  desc: null
+  value: imagenet
+NUM_CLASSES:
+  desc: null
+  value: 1
+ACTIVATION:
+  desc: null
+  value: sigmoid
+_wandb:
+  desc: null
+  value:
+    python_version: 3.10.11
+    cli_version: 0.16.3
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1742887753.708745
+    t:
+      1:
+      - 1
+      - 5
+      - 41
+      - 49
+      - 53
+      - 55
+      - 63
+      - 74
+      - 80
+      2:
+      - 1
+      - 5
+      - 41
+      - 49
+      - 53
+      - 55
+      - 63
+      - 74
+      - 80
+      3:
+      - 16
+      - 23
+      4: 3.10.11
+      5: 0.16.3
+      8:
+      - 4
+      - 5
+      13: darwin-arm64

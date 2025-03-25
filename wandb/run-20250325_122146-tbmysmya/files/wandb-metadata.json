@@ -1,0 +1,58 @@
+{
+    "os": "macOS-15.3.2-arm64-arm-64bit",
+    "python": "3.10.11",
+    "heartbeatAt": "2025-03-25T09:21:47.550762",
+    "startedAt": "2025-03-25T09:21:46.710906",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--dataset",
+        "3",
+        "--batch_size",
+        "16",
+        "--epochs",
+        "15",
+        "--learning_rate",
+        "8e-05"
+    ],
+    "state": "running",
+    "program": "/Users/ruzgarimren/Desktop/teknofest-saglikta-yapay-zeka/src/train.py",
+    "codePathLocal": "src/train.py",
+    "codePath": "src/train.py",
+    "git": {
+        "remote": "https://github.com/ruzgarimren/teknofest-saglikta-yapay-zeka.git",
+        "commit": "b240de31cf9ad668ab4153fdb8c3d72e6750bda6"
+    },
+    "email": "ruzgar@madlen.io",
+    "root": "/Users/ruzgarimren/Desktop/teknofest-saglikta-yapay-zeka",
+    "host": "Ruzgars-MacBook-Pro.local",
+    "username": "ruzgarimren",
+    "executable": "/usr/local/bin/python3",
+    "cpu_count": 14,
+    "cpu_count_logical": 14,
+    "cpu_freq": {
+        "current": 4056,
+        "min": 1020,
+        "max": 4056
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 4056,
+            "min": 1020,
+            "max": 4056
+        }
+    ],
+    "disk": {
+        "/": {
+            "total": 926.3517189025879,
+            "used": 10.393268585205078
+        }
+    },
+    "gpuapple": {
+        "type": "arm",
+        "vendor": "Apple"
+    },
+    "memory": {
+        "total": 36.0
+    }
+}

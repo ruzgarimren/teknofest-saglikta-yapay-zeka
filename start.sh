@@ -21,7 +21,7 @@ mkdir -p data
 mkdir -p outputs
 
 # Install required packages if needed
-pip install -r requirements.txt
+pip install -q -r requirements.txt
 
 # Run the main script with dataset parameter
 python3 src/run.py --dataset $1

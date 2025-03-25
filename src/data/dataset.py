@@ -28,11 +28,12 @@ def to_tensor(x, **kwargs):
         # For RGB images
         return x.transpose(2, 0, 1).astype('float32')
 
-def get_preprocessing(preprocessing_fn):
-    return album.Compose([
-        album.Lambda(image=preprocessing_fn),
-        album.Lambda(image=to_tensor, mask=to_tensor),
-    ])
+def get_preprocessing(preprocessing_fn=None):
+    _transform = []
+    if preprocessing_fn:
+        _transform.append(album.Lambda(image=preprocessing_fn))
+    _transform.append(album.Lambda(image=to_tensor, mask=to_tensor))
+    return album.Compose(_transform)
 
 class MultiDataset(Dataset):
     def __init__(self, dataset_id, data_dir, train=True, preprocessing=None):
@@ -53,11 +54,9 @@ class MultiDataset(Dataset):
             self.image_files = [f for f in os.listdir(self.images_dir) 
                               if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
         elif dataset_id == 3:
-            # For dataset 3, we need to collect images from all seq folders
-            self.image_paths = []  # Store full paths
-            self.mask_paths = []   # Store full paths
+            self.image_paths = []
+            self.mask_paths = []
             
-            # Get all sequence folders (seq1, seq2, etc.)
             seq_folders = [f for f in os.listdir(data_dir) if f.startswith('seq')]
             
             for seq in seq_folders:
@@ -66,13 +65,11 @@ class MultiDataset(Dataset):
                 masks_dir = os.path.join(seq_path, 'masks')
                 
                 if os.path.exists(images_dir) and os.path.exists(masks_dir):
-                    # Get all images in this sequence
                     for img_name in os.listdir(images_dir):
                         if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
                             img_path = os.path.join(images_dir, img_name)
                             mask_path = os.path.join(masks_dir, img_name)
                             
-                            # Only add if both image and mask exist
                             if os.path.exists(mask_path):
                                 self.image_paths.append(img_path)
                                 self.mask_paths.append(mask_path)
@@ -86,18 +83,20 @@ class MultiDataset(Dataset):
     
     def __getitem__(self, idx):
         if self.dataset_id == 3:
-            # For dataset 3, use stored full paths
             img_path = self.image_paths[idx]
             mask_path = self.mask_paths[idx]
         else:
-            # For dataset 1 and 2, construct paths
             img_name = self.image_files[idx]
             img_path = os.path.join(self.images_dir, img_name)
             mask_path = os.path.join(self.masks_dir, img_name)
         
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        # Read mask and ensure it's binary
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        mask = (mask > 0).astype('float32')
+        mask = np.expand_dims(mask, axis=-1)  # Add channel dimension
         
         if self.transform:
             transformed = self.transform(image=image, mask=mask)
